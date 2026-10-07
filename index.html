@@ -458,7 +458,7 @@ const FONT_GLYPHS = {
   '5': '111100111001111', '6': '111100111101111', '7': '111001001010010', '8': '111101111101111', '9': '111101111001111',
   A: '010101111101101', B: '110101110101110', C: '111100100100111', D: '110101101101110', E: '111100111100111', F: '111100111100100',
   G: '111100101101111', H: '101101111101101', I: '111010010010111', J: '001001001101111', K: '101101110101101', L: '100100100100111',
-  M: '111111101101101', N: '101111111101101', O: '111101101101111', P: '111101111100100', Q: '111101101111001', R: '110101110101101',
+  M: '10011111111110011001', N: '10011101111110111001', O: '111101101101111', P: '111101111100100', Q: '111101101111001', R: '110101110101101',
   S: '111100111001111', T: '111010010010010', U: '101101101101111', V: '101101101101010', W: '101101111111101', X: '101101010101101',
   Y: '101101010010010', Z: '111001010100111', ':': '000010000010000', '.': '000000000000010', '-': '000000111000000', '+': '000010111010000',
   '/': '001001010100100', '!': '010010010000010', '?': '111001011000010', "'": '010010000000000', ',': '000000000010100', '(': '010100100100010',
@@ -466,27 +466,33 @@ const FONT_GLYPHS = {
   '#': '101111101111101', '_': '000000000000111', '"': '101101000000000', '*': '101010111010101', '[': '110100100100110', ']': '011001001001011',
 };
 const fontCache = {};
+// Glyphs are 3 wide (15 bits) or 4 wide (20 bits, for M and N).
+function glyphWidth(ch) { const b = FONT_GLYPHS[ch] || FONT_GLYPHS['?']; return b.length / 5; }
 function glyphCanvas(ch, color) {
   const key = ch + color;
   if (fontCache[key]) return fontCache[key];
-  const bits = FONT_GLYPHS[ch] || FONT_GLYPHS['?'];
-  const c = document.createElement('canvas'); c.width = 3; c.height = 5;
+  const bits = FONT_GLYPHS[ch] || FONT_GLYPHS['?'], gw = bits.length / 5;
+  const c = document.createElement('canvas'); c.width = gw; c.height = 5;
   const g = c.getContext('2d'); g.fillStyle = color;
-  for (let i = 0; i < 15; i++) if (bits[i] === '1') g.fillRect(i % 3, Math.floor(i / 3), 1, 1);
+  for (let i = 0; i < bits.length; i++) if (bits[i] === '1') g.fillRect(i % gw, Math.floor(i / gw), 1, 1);
   fontCache[key] = c; return c;
 }
+function textWidth(str, scale) { let w = 0; for (const ch of str) w += (glyphWidth(ch) + 1) * scale; return w - scale; }
 // Draw text. align: 'left' | 'center' | 'right'. scale integer.
 function text(ctx, str, x, y, color, opts) {
   opts = opts || {};
   const scale = opts.scale || 1, align = opts.align || 'left';
   str = String(str).toUpperCase();
-  const w = str.length * 4 * scale - scale;
+  const w = textWidth(str, scale);
   if (align === 'center') x -= Math.floor(w / 2); else if (align === 'right') x -= w;
   x = Math.round(x); y = Math.round(y);
-  if (opts.shadow) {
-    for (let i = 0; i < str.length; i++) ctx.drawImage(glyphCanvas(str[i], opts.shadow), x + i * 4 * scale + scale, y + scale, 3 * scale, 5 * scale);
+  let cx = x;
+  for (let i = 0; i < str.length; i++) {
+    const gw = glyphWidth(str[i]);
+    if (opts.shadow) ctx.drawImage(glyphCanvas(str[i], opts.shadow), cx + scale, y + scale, gw * scale, 5 * scale);
+    ctx.drawImage(glyphCanvas(str[i], color), cx, y, gw * scale, 5 * scale);
+    cx += (gw + 1) * scale;
   }
-  for (let i = 0; i < str.length; i++) ctx.drawImage(glyphCanvas(str[i], color), x + i * 4 * scale, y, 3 * scale, 5 * scale);
   return w;
 }
 
@@ -2413,7 +2419,7 @@ const G = {
       if (this.levelIdx + 1 < LEVELS.length) { this.startLevel(this.levelIdx + 1); }
       else {
         const total = this.splits.reduce((a, b) => a + b, 0);
-        const pb = Storage.data.run; this.runPB = !pb || total < pb.total; this.runPrev = pb ? pb.total : null;
+        const pb = Storage.data.run; this.runPB = !pb || total < pb.total; this.runPrev = pb ? pb.total : null; this.prevRunSplits = pb ? pb.splits.slice() : null;
         if (this.runPB) { Storage.data.run = { total, splits: this.splits.slice(), date: Date.now() }; Storage.save(); }
         this.state = 'runcomplete'; this.resultTimer = 0; Audio.play('title');
       }
