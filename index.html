@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <title>SCUTE SPRINT</title>
 <style>
   html, body { margin: 0; padding: 0; background: #0b0a10; height: 100%; overflow: hidden; }
@@ -13,10 +13,37 @@
          background: repeating-linear-gradient(to bottom, rgba(0,0,0,0) 0px, rgba(0,0,0,0) 2px, rgba(0,0,0,0.28) 3px, rgba(0,0,0,0.28) 3px);
          mix-blend-mode: multiply; }
   #crt.on { display: block; }
+  body { touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; overscroll-behavior: none; }
+  /* touch controls (shown on touch devices) */
+  #touch { position: fixed; inset: 0; pointer-events: none; display: none; font-family: monospace; }
+  #touch.on { display: block; }
+  .tbtn { position: absolute; pointer-events: auto; border-radius: 50%; background: rgba(255,255,255,0.14); border: 2px solid rgba(255,255,255,0.45);
+          color: #fff; display: flex; align-items: center; justify-content: center; font-size: 3.2vmin; font-weight: bold; letter-spacing: 1px; touch-action: none; }
+  .tbtn.down { background: rgba(246,192,74,0.55); border-color: #f6c04a; }
+  #tJump   { right: 4vmin;  bottom: 6vmin;  width: 20vmin; height: 20vmin; }
+  #tAttack { right: 26vmin; bottom: 4vmin;  width: 16vmin; height: 16vmin; }
+  #tRoll   { right: 22vmin; bottom: 23vmin; width: 14vmin; height: 14vmin; }
+  .tsmall  { width: 9vmin; height: 9vmin; font-size: 2.4vmin; top: 2vmin; border-radius: 1.5vmin; }
+  #tPause  { right: 2vmin; }  #tRestart { right: 13vmin; }  #tMute { right: 24vmin; }  #tFull { right: 35vmin; }
+  #tStick  { position: absolute; left: 0; bottom: 0; width: 46vw; height: 70vh; pointer-events: auto; touch-action: none; }
+  #tStickBase { position: absolute; width: 26vmin; height: 26vmin; border-radius: 50%; border: 2px solid rgba(255,255,255,0.35); background: rgba(255,255,255,0.08); display: none; transform: translate(-50%, -50%); }
+  #tStickKnob { position: absolute; width: 11vmin; height: 11vmin; border-radius: 50%; background: rgba(255,255,255,0.45); display: none; transform: translate(-50%, -50%); }
+  #tHint { position: absolute; left: 2vmin; top: 2vmin; color: rgba(255,255,255,0.6); font-size: 2.4vmin; }
 </style>
 </head>
 <body>
 <div id="wrap"><canvas id="screen" width="384" height="216"></canvas><div id="crt"></div></div>
+<div id="touch">
+  <div id="tStick"><div id="tStickBase"></div><div id="tStickKnob"></div></div>
+  <div id="tHint">LEFT SIDE: DRAG TO MOVE (DOWN-FORWARD FOR SPECIALS)</div>
+  <div class="tbtn" id="tJump" data-b="jump">JUMP</div>
+  <div class="tbtn" id="tAttack" data-b="attack">HIT</div>
+  <div class="tbtn" id="tRoll" data-b="roll">ROLL</div>
+  <div class="tbtn tsmall" id="tPause" data-b="pause">II</div>
+  <div class="tbtn tsmall" id="tRestart" data-b="restart">R</div>
+  <div class="tbtn tsmall" id="tMute" data-b="mute">M</div>
+  <div class="tbtn tsmall" id="tFull" data-b="full">[ ]</div>
+</div>
 <script>
 'use strict';
 // =====================================================================================
@@ -60,7 +87,8 @@ const PHYS = {
   INVULN: 80,           // ticks of invulnerability after a hit
   SPRING_VEL: -8.4,     // spring launch
   DASH_PAD: 7.0,        // dash pad speed
-  LOOP_MIN: 3.6,        // min speed to stay on a loop/quarter-pipe
+  LOOP_MIN: 3.0,        // min speed to stay on the top half of a loop
+  CURVE_GRAVITY: 0.5,   // gravity scale while riding loops/quarter pipes (lower = more forgiving)
   PUNCH1: 12, PUNCH2: 12, PUNCH3: 22,   // attack durations in ticks
   COMBO_WINDOW: 14,     // ticks after a punch ends where the next one chains
   MOTION_WINDOW: 18,    // ticks for special-move motion inputs
@@ -108,6 +136,52 @@ const Storage = {
 };
 Storage.load();
 
+// ------------------------------------------------------------------ TOUCH CONTROLS ---
+// Floating stick on the left half (8-way, so down-forward motions work), buttons on the right.
+const Touch = {
+  active: false, stickId: null, sx: 0, sy: 0,
+  init() {
+    const root = document.getElementById('touch'); if (!root) return;
+    const isTouch = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
+    const show = () => { if (!this.active) { this.active = true; root.className = 'on'; } };
+    if (isTouch) show();
+    window.addEventListener('touchstart', show, { passive: true });
+    const st = Input.touch;
+    for (const el of root.querySelectorAll('.tbtn')) {
+      const b = el.dataset.b; const pts = new Set();
+      const press = e => { e.preventDefault(); Audio.unlock(); pts.add(e.pointerId); el.classList.add('down'); try { el.setPointerCapture(e.pointerId); } catch (x) {}
+        if (b === 'full') { this.fullscreen(); return; } st[b] = true; };
+      const release = e => { pts.delete(e.pointerId); if (!pts.size) { el.classList.remove('down'); st[b] = false; } };
+      el.addEventListener('pointerdown', press); el.addEventListener('pointerup', release); el.addEventListener('pointercancel', release); el.addEventListener('lostpointercapture', release);
+    }
+    const zone = document.getElementById('tStick'), base = document.getElementById('tStickBase'), knob = document.getElementById('tStickKnob');
+    const clear = () => { st.left = st.right = st.up = st.down = false; base.style.display = knob.style.display = 'none'; this.stickId = null; };
+    const moveTo = (x, y) => {
+      const r = zone.getBoundingClientRect(); const dx = x - this.sx, dy = y - this.sy; const d = Math.hypot(dx, dy);
+      const dead = Math.min(r.width, r.height) * 0.06, max = Math.min(r.width, r.height) * 0.22;
+      const k = d > max ? max / d : 1; knob.style.left = (this.sx + dx * k - r.left) + 'px'; knob.style.top = (this.sy + dy * k - r.top) + 'px';
+      st.left = st.right = st.up = st.down = false;
+      if (d < dead) return;
+      const a = Math.atan2(dy, dx); // 8-way sectors, each 45 degrees wide, diagonals included
+      const sec = Math.round(a / (Math.PI / 4));
+      st.right = sec === 0 || sec === 1 || sec === -1; st.left = Math.abs(sec) >= 3; st.down = sec >= 1 && sec <= 3; st.up = sec <= -1 && sec >= -3;
+    };
+    zone.addEventListener('pointerdown', e => { e.preventDefault(); Audio.unlock(); if (this.stickId !== null) return; this.stickId = e.pointerId; this.sx = e.clientX; this.sy = e.clientY;
+      const r = zone.getBoundingClientRect(); base.style.left = knob.style.left = (e.clientX - r.left) + 'px'; base.style.top = knob.style.top = (e.clientY - r.top) + 'px'; base.style.display = knob.style.display = 'block';
+      try { zone.setPointerCapture(e.pointerId); } catch (x) {} });
+    zone.addEventListener('pointermove', e => { if (e.pointerId === this.stickId) moveTo(e.clientX, e.clientY); });
+    const end = e => { if (e.pointerId === this.stickId) clear(); };
+    zone.addEventListener('pointerup', end); zone.addEventListener('pointercancel', end); zone.addEventListener('lostpointercapture', end);
+  },
+  fullscreen() {
+    const d = document.documentElement;
+    try {
+      if (!document.fullscreenElement) { const p = d.requestFullscreen ? d.requestFullscreen() : d.webkitRequestFullscreen && d.webkitRequestFullscreen(); if (p && p.then) p.then(() => { try { screen.orientation && screen.orientation.lock && screen.orientation.lock('landscape').catch(() => {}); } catch (x) {} }).catch(() => {}); }
+      else if (document.exitFullscreen) document.exitFullscreen();
+    } catch (x) { /* not supported */ }
+  },
+};
+
 // ----------------------------------------------------------------------- INPUT -------
 // Logical buttons: left,right,up,down,jump,attack,roll,pause,restart,restartRun,mute,crt
 const Input = {
@@ -120,8 +194,10 @@ const Input = {
     Enter: 'pause', Escape: 'pause', KeyR: 'restart', KeyM: 'mute', KeyT: 'crt', KeyG: 'ghost',
   },
   raw: {},
+  touch: {},
   anyKey: false,
   init() {
+    Touch.init();
     window.addEventListener('keydown', e => {
       if (e.repeat) { if (this.keymap[e.code]) e.preventDefault(); return; }
       const b = this.keymap[e.code];
@@ -152,11 +228,11 @@ const Input = {
     return g;
   },
   update() {
-    const g = this.pollGamepad();
+    const g = this.pollGamepad(), t = this.touch;
     this.prevHeld = this.held; this.held = {}; this.pressed = {}; this.released = {};
     const names = ['left', 'right', 'up', 'down', 'jump', 'attack', 'roll', 'pause', 'restart', 'restartRun', 'mute', 'crt', 'ghost'];
     for (const n of names) {
-      const h = !!(this.raw[n] || g[n]);
+      const h = !!(this.raw[n] || g[n] || t[n]);
       this.held[n] = h;
       if (h && !this.prevHeld[n]) this.pressed[n] = true;
       if (!h && this.prevHeld[n]) this.released[n] = true;
@@ -583,7 +659,8 @@ class TileMap {
   surfaceAt(tx, ty, px, fromAbove) {
     const ch = this.get(tx, ty), t = T(ch);
     if (t.solid) return ty * TILE;
-    if (t.oneway || t.spring || t.dashpad) return fromAbove ? ty * TILE : null;
+    if (t.oneway) return fromAbove ? ty * TILE : null;
+    if (t.spring || t.dashpad) return null; // pads are triggers that sit on the tile below
     if (t.ladder) { // ladder top acts as a platform if nothing climbable above
       return fromAbove && !T(this.get(tx, ty - 1)).ladder ? ty * TILE : null;
     }
@@ -930,8 +1007,11 @@ class Hero {
     if (!this.onGround) this.vy = Math.min(this.vy + PHYS.GRAVITY, PHYS.MAX_FALL);
     this.groundTile = null;
     moveBody(this, map);
-    if (this.groundTile) { const ch = this.groundTile.ch;
-      if (ch === 'S' && this.onGround) { this.onGround = false; this.vy = PHYS.SPRING_VEL; this.sx = 0.7; this.sy = 1.4; Audio.sfx('spring'); G.springHit(this.groundTile); this.jumpHeld = false; if (this.state === 'roll' || this.state === 'crouch') this.stand(); }
+    // springs / dash pads: trigger when standing on them or when the feet are inside the pad tile
+    let padTile = this.groundTile;
+    if (this.onGround) { const ptx = Math.floor(this.cx / TILE), pty = Math.floor((this.feet - 1) / TILE); const pch = map.get(ptx, pty); if (pch === 'S' || T(pch).dashpad) padTile = { ch: pch, tx: ptx, ty: pty }; }
+    if (padTile) { const ch = padTile.ch;
+      if (ch === 'S' && this.onGround) { this.onGround = false; this.vy = PHYS.SPRING_VEL; this.sx = 0.7; this.sy = 1.4; Audio.sfx('spring'); G.springHit(padTile); this.jumpHeld = false; if (this.state === 'roll' || this.state === 'crouch') this.stand(); }
       if (T(ch).dashpad && this.onGround) { const d = T(ch).dashpad; if (Math.abs(this.vx) < PHYS.DASH_PAD || sign(this.vx) !== d) { this.vx = d * PHYS.DASH_PAD; this.facing = d; if (this.state !== 'roll') this.enterRoll(G); Audio.sfx('dash'); Particles.dust(this.cx, this.feet, 6, '#fff'); } }
     }
     if (this.hitHead) G.bumpBlock(this.hitHead, this);
@@ -1037,7 +1117,7 @@ class Hero {
   }
   updateCurve(inp, G) {
     const c = this.curve;
-    this.s += PHYS.GRAVITY * Math.cos(this.a) * 0.9;
+    this.s += PHYS.GRAVITY * Math.cos(this.a) * PHYS.CURVE_GRAVITY;
     this.a += this.s / (c.r - 5);
     this.placeOnCurve();
     if (this.anim % 3 === 0 && Math.abs(this.s) > 3) Particles.spawn(this.cx, this.feet, rnd(-0.5, 0.5), rnd(-0.5, 0.5), 10, '#fff', 1, 0);
@@ -1194,6 +1274,12 @@ class Entity {
   }
 }
 
+// True when the tile just ahead of a walking body (at foot level) is a hazard.
+function hazardAhead(map, b) {
+  const d = sign(b.vx); if (!d) return false;
+  const tx = Math.floor((d > 0 ? b.x + b.w + 2 : b.x - 2) / TILE), ty = Math.floor((b.feet - 1) / TILE);
+  return !!T(map.get(tx, ty)).hazard || !!T(map.get(tx, ty + 1)).hazard;
+}
 // Bumbler: grumpy round walker. Stomp, punch, or roll through it.
 class Walker extends Entity {
   constructor(x, y) { super(x, y + 6, 12, 10); this.enemy = true; this.vx = -0.5; this.facing = -1; this.squash = 0; this.spawnX = x; this.spawnY = y; }
@@ -1206,6 +1292,7 @@ class Walker extends Entity {
     this.vy = Math.min(this.vy + PHYS.GRAVITY, PHYS.MAX_FALL);
     moveBody(this, G.map, { step: 4 });
     if (this.hitWall) { this.vx = -this.hitWall * 0.5; this.facing = sign(this.vx); }
+    if (this.onGround && hazardAhead(G.map, this)) { this.vx = -this.vx; this.facing = sign(this.vx); }
     if (this.y > G.map.ph + 20) this.remove = true;
   }
   stomp(G) { this.squash = 14; this.enemy = false; Audio.sfx('stomp'); Particles.dust(this.cx, this.feet, 4); }
@@ -1224,6 +1311,7 @@ class Shell extends Entity {
     if (this.dying) return this.updateTumble(G);
     if (!this.onScreen(Camera.x, Camera.y, 48) && !this.woke) return; this.woke = true;
     if (this.flash) this.flash--;
+    if (this.grace > 0) this.grace--;
     if (this.mode === 'shell') { this.timer++; if (this.timer > 360) { this.mode = 'walk'; this.vx = this.facing * 0.6; this.enemy = true; } }
     if (this.mode === 'kicked') { // kill other enemies
       for (const e of G.ents) if (e !== this && e.enemy && !e.dying && aabb(this, e) && e.takeHit) { e.takeHit(G, { dmg: 2, big: false, dir: sign(this.vx), from: 'shell' }); G.addScore && G.addScore(); }
@@ -1232,18 +1320,19 @@ class Shell extends Entity {
     this.vy = Math.min(this.vy + PHYS.GRAVITY, PHYS.MAX_FALL);
     moveBody(this, G.map, { step: 4, bounce: this.mode === 'kicked' ? 1 : 0 });
     if (this.hitWall && this.mode === 'walk') { this.vx = -this.hitWall * 0.6; this.facing = sign(this.vx); }
+    if (this.mode === 'walk' && this.onGround && hazardAhead(G.map, this)) { this.vx = -this.vx; this.facing = sign(this.vx); }
     if (this.hitWall && this.mode === 'kicked') { Audio.sfx('bump'); Particles.burst(this.cx, this.cy, 4, '#fff', 1.5); }
     if (this.y > G.map.ph + 20) this.remove = true;
   }
   stomp(G) {
     if (this.mode === 'kicked' || this.mode === 'walk') { this.mode = 'shell'; this.vx = 0; this.timer = 0; this.enemy = false; Audio.sfx('stomp'); Particles.dust(this.cx, this.feet, 4); }
   }
-  kick(G, dir) { this.mode = 'kicked'; this.vx = dir * 5; this.enemy = true; this.timer = 0; Audio.sfx('punch2'); Particles.burst(this.cx, this.cy, 5, '#fff', 2); }
+  kick(G, dir) { this.mode = 'kicked'; this.vx = dir * 5; this.enemy = true; this.timer = 0; this.grace = 14; Audio.sfx('punch2'); Particles.burst(this.cx, this.cy, 5, '#fff', 2); }
   takeHit(G, hb) {
     if (hb.big || hb.from === 'shell' || hb.from === 'fireball' && this.mode !== 'shell') { this.tumble(G, hb.dir, hb.big); return; }
     this.kick(G, hb.dir);
   }
-  get harmfulToHero() { return this.mode === 'walk' || (this.mode === 'kicked' && Math.abs(this.vx) > 1); }
+  get harmfulToHero() { return this.mode === 'walk' || (this.mode === 'kicked' && Math.abs(this.vx) > 1 && !(this.grace > 0)); }
   draw(ctx, cx, cy) {
     if (this.mode === 'walk') { this.drawSprite(ctx, SPR.shell, cx, cy, -1, 0); return; }
     const s = SPR.shellOnly; const wob = this.mode === 'kicked' ? ((this.anim >> 1) & 1) : 0;
@@ -1959,6 +2048,42 @@ const LEVELS = [
     '######################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################'
 
   ] }] },
+  { id: 'l2', name: 'CHECKER COAST', tag: 'SPEED ZONE', music: 'l2', targets: [50000, 70000, 100000], hint: 'HOLD DOWN WHILE MOVING TO ROLL. CROUCH + C TO CHARGE A SPIN DASH.',
+    stages: [{ kind: 'platform', theme: 'coast', map: [
+    '                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              WW',
+    '                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              WW',
+    '                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              WW',
+    '                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              WW',
+    '                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              WW',
+    '                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              WW',
+    '                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              WW',
+    '                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              WW',
+    '                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              WW',
+    '                                                                                                                                                   oooo                                                                                                                                                                                                                                                                                                                                                                                                                       WW',
+    '                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              WW',
+    '                                                                                                           ooooo                                  ====== D                                                                                                                                                                                                                                                                                                                                                                                                                    WW',
+    '                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              WW',
+    '                                                                                                           ===== D                                                                                                                                                                                                                                                                                                                                                                                                                                                            WW',
+    '                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              WW',
+    '                                                                                                                                           ooo                                                                                                                                                                                                                                                                                                                                                                                                                                WW',
+    '                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              WW',
+    '                                                                                                                                          ===== S                                                                                                                                                                                                                                                                                                                                                                                                                             WW',
+    '                                                            oooo     ooo     oooo      ooo     ooofo                                                                                                                                                                ooo       oooo       oooo       ooo        oo                                                                                                                                                                                                                                                             WW',
+    '                                                                                                       S                                                                             oo  f                                                                                                                          S                                                                                                                                                                                                                                                         WW',
+    '                                   o o o o              f  ======   =====   ======    =====   ========#==                                                                           o  o                                                                          #=====     ======     ======     =====      =======                                                                                                                                                                                                                                                         WW',
+    '                                                           #                                                                                                   f                   o    o                                                                         #                                                                                                                                                                                                                                                                                                           WW',
+    '        ooooo                                     ooooo   /#                                                                                                           /##\\     /##\\     /##\\                  oooo            oooo            oooo              /#                                                                            oooo                                                                                                                                                                                                                           WW',
+    '  x               D     D               O               (/##      ^^      w     ^^      w     ^^    w       c                           S           w     w         c /####\\   /####\\   /####\\     D                                                           (/##     ^^           ^^          ^^          c                        D                    f                                                                                                                                                                                                          G       WW',
+    '##############################\\            /##########  ##############################################  ########\\     f            /###################################################################    ############    ############    ####################   #############################################\\                  /######    ########    #######################################################################################################################################################################################################################',
+    '###############################\\          /###########                                                   ########\\        O       /####################################################################    ############    ############    ####################    #############################################\\        O       /#######    ########    #######################################################################################################################################################################################################################',
+    '######################################################            oooo            oooo                   #########\\              /#####################################################################    ############    ############    ####################    ##############################################\\              /########    ########    #######################################################################################################################################################################################################################',
+    '######################################################        ^^        w     ^^        w             S  ##########\\            /######################################################################    ############    ############    ####################    ###############################################\\            /#########    ########    #######################################################################################################################################################################################################################',
+    '#######################################################################################################################################################################################################    ############    ############    ####################    ######################################################################    ########    #######################################################################################################################################################################################################################',
+    '#######################################################################################################################################################################################################~~~~############~~~~############~~~~####################    ######################################################################~~~~########~~~~#######################################################################################################################################################################################################################',
+    '###############################################################################################################################################################################################################################################################    #############################################################################################################################################################################################################################################################################################################',
+    '###############################################################################################################################################################################################################################################################    #############################################################################################################################################################################################################################################################################################################'
+
+  ] }] },
 ];
 
 // ----------------------------------------------------------------------- GAME --------
@@ -2005,8 +2130,8 @@ const G = {
         case 'M': this.ents.push(new MalletItem(x, y)); break;
         case 'K': this.ents.push(new Crate(x, y)); break;
         case 'O': this.ents.push(new Curve(x + 8, y + 8, 40, 'loop')); break;
-        case '(': this.ents.push(new Curve(x + 40, y + 16 - 40, 40, 'qpipe', 1)); break;
-        case ')': this.ents.push(new Curve(x + 16 - 40, y + 16 - 40, 40, 'qpipe', -1)); break;
+        case '(': this.ents.push(new Curve(x, y + 16 - 48, 48, 'qpipe', 1)); break;
+        case ')': this.ents.push(new Curve(x + 16, y + 16 - 48, 48, 'qpipe', -1)); break;
         case 'C': { const spec = (this.stage.cannons || {})[s.tx + ',' + s.ty] || {}; this.ents.push(new Cannon(x + 8, y + 8, spec.a0 !== undefined ? spec.a0 : -Math.PI / 2 - 0.6, spec.a1 !== undefined ? spec.a1 : -Math.PI / 2 + 0.6, spec.speed || 0.035)); break; }
         case '@': this.boss = new CraneBoss(x + 8, y + 8); this.ents.push(this.boss); break;
         case 'E': this.ents.push(Object.assign(new Entity(x, y - 4, 16, 20), { bikePickup: true, update(G) { this.anim++; if (aabb(this, G.hero) && !G.hero.dead) { G.nextStage(); } }, draw(ctx, cx, cy) { drawBike(ctx, Math.round(this.x - cx), Math.round(this.y + 10 - cy + Math.sin(this.anim * 0.1) * 2), this.anim, false); if (this.anim & 8) text(ctx, 'RIDE!', Math.round(this.cx - cx), Math.round(this.y - 10 - cy), PAL.yellow, { align: 'center' }); } }));
@@ -2232,7 +2357,7 @@ const G = {
       }
       if (!e.enemy || e.dying) {
         // stopped shell: kick it
-        if (e instanceof Shell && e.mode === 'shell' && aabb(e, heroBox)) { const dir = h.cx < e.cx ? 1 : -1; e.kick(this, dir); h.vx = -dir * 0.5; }
+        if (e instanceof Shell && e.mode === 'shell' && aabb(e, heroBox) && h.feet > e.y + 3) { const dir = h.cx < e.cx ? 1 : -1; e.kick(this, dir); h.vx = -dir * 0.5; }
         continue;
       }
       if (!aabb(e, heroBox)) continue;
@@ -2490,7 +2615,9 @@ function drawTitle(ctx) {
     items.forEach((it, i) => { const sel = G.sub === i; text(ctx, (sel ? '> ' : '  ') + it + (sel ? ' <' : '  '), W / 2, 100 + i * 12, sel ? PAL.yellow : PAL.white, { align: 'center', scale: 1, shadow: PAL.black }); });
     const pb = Storage.data.run; if (pb) text(ctx, 'BEST RUN ' + fmtTime(pb.total), W / 2, 126, PAL.cyan, { align: 'center' });
     // controls
-    const c = ['ARROWS/WASD MOVE   Z/SPACE JUMP   X ATTACK   C ROLL/SPIN-DASH', 'ENTER PAUSE   R RESTART LEVEL   SHIFT+R RESTART RUN', 'M MUTE   T CRT SCANLINES   G GHOST   GAMEPAD OK', 'SPECIALS:  DOWN,DOWN-FWD,FWD+X FIREBALL    FWD,DOWN,DOWN-FWD+X UPPERCUT'];
+    const c = Touch.active
+      ? ['LEFT HALF: DRAG STICK TO MOVE (DIAGONALS OK)', 'JUMP / HIT / ROLL BUTTONS ON THE RIGHT', 'TOP: II PAUSE   R RESTART   M MUTE   [ ] FULLSCREEN', 'SPECIALS:  DOWN,DOWN-FWD,FWD+HIT FIREBALL    FWD,DOWN,DOWN-FWD+HIT UPPERCUT']
+      : ['ARROWS/WASD MOVE   Z/SPACE JUMP   X ATTACK   C ROLL/SPIN-DASH', 'ENTER PAUSE   R RESTART LEVEL   SHIFT+R RESTART RUN', 'M MUTE   T CRT SCANLINES   G GHOST   GAMEPAD OK', 'SPECIALS:  DOWN,DOWN-FWD,FWD+X FIREBALL    FWD,DOWN,DOWN-FWD+X UPPERCUT'];
     c.forEach((l, i) => text(ctx, l, W / 2, 138 + i * 8, i === 3 ? PAL.pink : '#e8e8f0', { align: 'center' }));
   } else {
     text(ctx, 'PRACTICE - PICK A LEVEL  (C: BACK)', W / 2, 96, PAL.white, { align: 'center', shadow: PAL.black });
@@ -2501,7 +2628,8 @@ function drawTitle(ctx) {
     });
     const lv = LEVELS[G.sub]; text(ctx, 'GOLD ' + fmtTime(lv.targets[0]) + '  SILVER ' + fmtTime(lv.targets[1]) + '  BRONZE ' + fmtTime(lv.targets[2]), W / 2, 162, '#c9c9d4', { align: 'center' });
   }
-  if (!Audio.unlocked) text(ctx, 'PRESS ANY KEY FOR SOUND', W / 2, H - 10, (f & 16) ? PAL.white : '#888', { align: 'center' });
+  if (!Audio.unlocked) text(ctx, Touch.active ? 'TAP JUMP TO START' : 'PRESS ANY KEY FOR SOUND', W / 2, H - 10, (f & 16) ? PAL.white : '#888', { align: 'center' });
+  if (Touch.active && window.innerHeight > window.innerWidth && (f & 32)) text(ctx, 'ROTATE YOUR PHONE FOR A BIGGER VIEW', W / 2, H - 20, PAL.yellow, { align: 'center' });
 }
 function medalColor(m) { return m === 'GOLD' ? PAL.yellow : m === 'SILVER' ? PAL.greyL : m === 'BRONZE' ? PAL.orange : '#888'; }
 
@@ -2573,7 +2701,8 @@ const canvas = document.getElementById('screen');
 const ctx = canvas.getContext('2d');
 ctx.imageSmoothingEnabled = false;
 function resize() {
-  const s = Math.max(1, Math.floor(Math.min(window.innerWidth / W, window.innerHeight / H)));
+  const fit = Math.min(window.innerWidth / W, window.innerHeight / H);
+  const s = fit >= 2 ? Math.floor(fit) : Math.max(0.5, Math.floor(fit * 100) / 100); // crisp integer scale on desktops, best-fit on phones
   canvas.style.width = (W * s) + 'px'; canvas.style.height = (H * s) + 'px';
   const crt = document.getElementById('crt'); crt.style.width = canvas.style.width; crt.style.height = canvas.style.height;
 }
