@@ -1145,9 +1145,9 @@ class Hero {
     }
   }
   // ---- cannons (girder tower)
-  enterCannon(c) { this.state = 'cannon'; this.cannon = c; this.vx = 0; this.vy = 0; this.setHeight(10); this.x = c.x - 5; this.y = c.y - 5; this.onGround = false; Audio.sfx('warp'); }
+  enterCannon(c) { this.state = 'cannon'; this.cannon = c; this.vx = 0; this.vy = 0; this.setHeight(10); this.x = c.hcx - 5; this.y = c.hcy - 5; this.onGround = false; this.hitbox = null; Audio.sfx('warp'); }
   updateCannon(inp, G) {
-    const c = this.cannon; this.x = c.x - 5; this.y = c.y - 5;
+    const c = this.cannon; this.x = c.hcx - 5; this.y = c.hcy - 5;
     if (inp.pressed.jump || inp.pressed.attack) { inp.pressed.jump = false; inp.pressed.attack = false; this.state = 'flying'; this.flying = 90; this.vx = Math.cos(c.angle) * PHYS.CANNON_SPEED; this.vy = Math.sin(c.angle) * PHYS.CANNON_SPEED; c.fired = 12; c.cooldown = 30; this.cannon = null; Audio.sfx('cannon'); FX.shake(3); Particles.burst(this.cx, this.cy, 10, '#ffd36a', 3); }
   }
   get cy() { return this.y + this.h / 2; }
@@ -1156,7 +1156,7 @@ class Hero {
     this.x += this.vx; this.y += this.vy;
     const map = G.map;
     if (this.anim % 2 === 0) Particles.spawn(this.cx, this.cy, rnd(-0.5, 0.5), rnd(-0.5, 0.5), 12, '#fff', 1, 0);
-    if (map.solidAt(this.cx, this.cy) || map.solidAt(this.x, this.cy) || map.solidAt(this.x + this.w, this.cy) || map.solidAt(this.cx, this.y) || map.solidAt(this.cx, this.feet) || this.flying <= 0 || this.x < 0 || this.x + this.w > map.pw) {
+    if (map.solidAt(this.cx, this.cy) || map.solidAt(this.x, this.cy) || map.solidAt(this.x + this.w, this.cy) || map.solidAt(this.cx, this.y) || map.solidAt(this.cx, this.feet) || this.flying <= 0 || this.x < 0 || this.x + this.w > map.pw || this.y < -8) {
       // bounce out of the wall and fall
       this.x -= this.vx; this.y -= this.vy; this.state = 'normal'; this.setHeight(14); this.vx = this.vx * 0.2; this.vy = Math.min(this.vy, 0) * 0.2; this.onGround = false;
     }
@@ -1536,9 +1536,8 @@ class Cannon extends Entity {
     if (this.a1 === undefined) this.angle += this.speed; else this.angle = lerp(this.a0, this.a1, (Math.sin(this.t) + 1) / 2);
     if (this.cooldown > 0) this.cooldown--; if (this.fired > 0) this.fired--;
     const h = G.hero;
-    if (this.cooldown === 0 && !h.dead && h.state !== 'cannon' && h.state !== 'warp' && aabb({ x: this.x + 2, y: this.y + 2, w: 12, h: 12 }, h)) {
-      h.enterCannon({ x: this.hcx, y: this.hcy, angle: this.angle, ent: this });
-      h.cannon = this; this.caught = true;
+    if (this.cooldown === 0 && !h.dead && h.state !== 'cannon' && h.state !== 'warp' && h.state !== 'hurt' && aabb({ x: this.x + 1, y: this.y + 1, w: 14, h: 14 }, h)) {
+      h.enterCannon(this); this.caught = true;
     }
   }
   get angleNow() { return this.angle; }
@@ -1595,7 +1594,7 @@ class Drum extends Entity {
     if (this.onGround && this.ladderCd === 0) {
       const tx = Math.floor(this.cx / TILE), ty = Math.floor((this.feet + 2) / TILE);
       if (T(map.get(tx, ty)).ladder && Math.abs(this.cx - (tx * TILE + 8)) < 3) {
-        if (srand() < 0.45) { this.falling = true; this.x = tx * TILE + 2; this.vx = sign(this.vx) * 1.3; this.onGround = false; }
+        if (srand() < 0.3) { this.falling = true; this.x = tx * TILE + 2; this.vx = sign(this.vx) * 1.3; this.onGround = false; }
         this.ladderCd = 40;
       }
     }
@@ -1605,7 +1604,7 @@ class Drum extends Entity {
     if (hb.big || hb.from === 'mallet' || hb.from === 'fireball' || hb.from === 'upper') { this.tumble(G, hb.dir, hb.big || hb.from === 'mallet'); G.drumSmashed && G.drumSmashed(this); if (hb.from === 'mallet') Audio.sfx('mallet'); }
     else { Audio.sfx('bump'); Particles.burst(this.cx, this.cy, 3, '#fff', 1); }
   }
-  stomp(G) { return false; } // can't be stomped
+  stomp(G) { Audio.sfx('bump'); Particles.burst(this.cx, this.y, 4, '#fff', 1.5); return true; } // landing on a drum bounces you off; it keeps rolling
   draw(ctx, cx, cy) {
     ctx.save(); ctx.translate(Math.round(this.cx - cx), Math.round(this.cy - cy)); ctx.rotate(this.rot); ctx.drawImage(SPR.drum, -6, -6); ctx.restore();
   }
@@ -1619,7 +1618,7 @@ class CraneBoss extends Entity {
     if (G.hero.dead || G.levelDone) return;
     this.timer--;
     const dist = this.y - G.hero.y; // positive when hero is below
-    const interval = dist > 900 ? 150 : dist > 500 ? 120 : 95;
+    const interval = dist > 900 ? 210 : dist > 500 ? 180 : 150;
     if (this.timer === 25) { this.arm = 1; this.mood = 1; }
     if (this.timer <= 0) {
       this.timer = interval; this.arm = 0; this.mood = 0; this.throws++;
@@ -1701,9 +1700,9 @@ class Thug extends Entity {
 
 // ---------------------------------------------------------------- RIVAL FIGHTERS ----
 const RIVALS = {
-  zoner:    { name: 'HERON', color: '#6ec6ff', color2: '#2a6fb0', hp: 100, speed: 0.9, keepDist: 110, w: 14, h: 26 },
-  grappler: { name: 'MOSS', color: '#9ccc65', color2: '#4a7a2a', hp: 130, speed: 0.55, keepDist: 0, w: 20, h: 28 },
-  rushdown: { name: 'VIXEN', color: '#ff9f43', color2: '#b04a12', hp: 90, speed: 1.7, keepDist: 0, w: 14, h: 24 },
+  zoner:    { name: 'HERON', color: '#6ec6ff', color2: '#2a6fb0', hp: 150, speed: 1.0, keepDist: 110, w: 14, h: 26, blockChance: 0.45 },
+  grappler: { name: 'MOSS', color: '#9ccc65', color2: '#4a7a2a', hp: 190, speed: 0.6, keepDist: 0, w: 20, h: 28, blockChance: 0.55 },
+  rushdown: { name: 'VIXEN', color: '#ff9f43', color2: '#b04a12', hp: 140, speed: 1.8, keepDist: 0, w: 14, h: 24, blockChance: 0.35 },
 };
 class RivalShot extends Entity {
   constructor(x, y, dir) { super(x, y, 8, 6); this.vx = dir * 2.8; this.life = 120; this.enemy = true; this.isShot = true; }
@@ -1744,7 +1743,7 @@ class Rival extends Entity {
       case 'block': { this.blocking = true; this.vx = 0; this.timer--; if (this.timer <= 0) { this.state = 'idle'; this.timer = 10; } break; }
       case 'attack': this.updateAttack(G, h, dx, dist); break;
       case 'hurt': { this.timer--; if (this.onGround) this.vx *= 0.8; if (this.timer <= 0) { this.state = 'idle'; this.timer = this.kind === 'rushdown' ? 4 : 10; } break; }
-      case 'knock': { if (this.onGround && this.vy >= 0) { this.timer--; this.vx *= 0.85; if (this.timer <= 0) { this.state = 'idle'; this.timer = 20; this.invuln = 0; } } break; }
+      case 'knock': { if (this.onGround && this.vy >= 0) { this.timer--; this.vx *= 0.85; if (this.timer <= 0) { this.state = 'idle'; this.timer = 20; this.invuln = 0; this.hurtCount = 0; } } break; }
       case 'jump': { if (this.onGround && this.vy >= 0 && this.timer < 0) { this.state = 'idle'; this.timer = 8; } this.timer--; break; }
     }
     this.vy = Math.min(this.vy + PHYS.GRAVITY, PHYS.MAX_FALL);
@@ -1755,7 +1754,9 @@ class Rival extends Entity {
     const c = this.cfg, h = G.hero;
     const heroAttacking = h.attacking || (h.rolling && Math.abs(h.vx) > 2);
     // readable defensive reactions
-    if (heroAttacking && dist < 40 && srand() < (this.kind === 'zoner' ? 0.35 : this.kind === 'grappler' ? 0.5 : 0.3) && h.onGround) { this.state = 'block'; this.timer = 24; return; }
+    if (heroAttacking && dist < 40 && srand() < c.blockChance && h.onGround) { this.state = 'block'; this.timer = 24; return; }
+    // punish a hero who keeps swinging at nothing: step in and strike while they recover
+    if (h.state === 'attack' && h.timer < 5 && dist < 34 && srand() < 0.5) { this.startAttack(this.kind === 'zoner' ? 'kick' : this.kind === 'grappler' ? 'heavy' : 'combo'); return; }
     if (this.kind === 'zoner') {
       // keep distance, throw shots; anti-air kick when close
       if (dist < c.keepDist - 20 && srand() < 0.6) { this.state = 'walk'; this.walkDir = -1; this.timer = 30; if (this.hitWall || (this.facing > 0 ? this.x < 20 : this.x + this.w > G.map.pw - 20)) { this.state = 'jump'; this.vy = -5.2; this.vx = this.facing * 1.5; this.timer = 10; } return; }
@@ -1807,6 +1808,7 @@ class Rival extends Entity {
   }
   takeHit(G, hb) {
     if (this.ko) return;
+    if (this.state === 'knock' && !hb.big) { return; } // getting up: only the big fist connects
     if (hb.id !== undefined && this.hitIds.has(hb.id)) return; if (hb.id !== undefined) this.hitIds.add(hb.id);
     let dmg = hb.fightDmg || hb.dmg * 8;
     if (this.blocking) { dmg = Math.round(dmg * 0.15); Audio.sfx('block'); Particles.burst(this.cx, this.cy, 4, '#fff', 1.5); this.vx = -this.facing * 1.5;
@@ -1815,7 +1817,7 @@ class Rival extends Entity {
     Particles.burst(this.cx, this.cy, hb.big ? 12 : 5, '#fff', hb.big ? 3 : 1.5);
     if (this.hp <= 0) { this.hp = 0; this.ko = true; this.enemy = false; this.vx = hb.dir * 3.5; this.vy = -5; this.onGround = false; this.state = 'ko'; this.hitbox = null; Audio.sfx('ko'); FX.hitstop(10); FX.shake(6); G.rivalKO(this); return; }
     if (hb.big || hb.launch) { this.state = 'knock'; this.timer = 30; this.vx = hb.dir * (hb.big ? 4 : 2); this.vy = hb.launch ? -5 : -3; this.onGround = false; FX.hitstop(hb.big ? PHYS.HITSTOP_BIG : 3); FX.shake(hb.big ? 4 : 2); }
-    else { this.state = 'hurt'; this.timer = 14; this.vx = hb.dir * 1.4; FX.hitstop(2); }
+    else { this.state = 'hurt'; this.timer = 14; this.vx = hb.dir * 1.4; FX.hitstop(2); this.hurtCount = (this.hurtCount || 0) + 1; if (this.hurtCount >= 3) { this.hurtCount = 0; this.state = 'knock'; this.timer = 20; this.vx = hb.dir * 3; this.vy = -3; this.onGround = false; } }
     this.hitbox = null;
   }
   stomp(G) { this.takeHit(G, { fightDmg: 6, dir: 0, dmg: 1 }); }
@@ -2084,6 +2086,167 @@ const LEVELS = [
     '###############################################################################################################################################################################################################################################################    #############################################################################################################################################################################################################################################################################################################'
 
   ] }] },
+  { id: 'l3', name: 'HARBOUR TOURNAMENT', tag: 'STREET FIGHTS', music: 'l3', targets: [70000, 95000, 130000], hint: 'HOLD BACK TO BLOCK. GRABS CAN NOT BE BLOCKED: JUMP THEM.',
+    stages: [
+      { kind: 'duel', rival: 'zoner', theme: 'dock', lockCameraY: 8, map: [
+      '                        ',
+      '                        ',
+      '                        ',
+      '                        ',
+      '                        ',
+      '                        ',
+      '                        ',
+      '                        ',
+      '                        ',
+      '                        ',
+      '                        ',
+      '    x              Y    ',
+      '########################',
+      '########################',
+      ] },
+      { kind: 'bonus', theme: 'dock', time: 10, lockCameraY: 8, map: [
+      '                        ',
+      '                        ',
+      '                        ',
+      '                        ',
+      '                        ',
+      '                        ',
+      '                        ',
+      '                        ',
+      '                        ',
+      '           KKKK         ',
+      '          KKKKKK        ',
+      '    x    KKKKKKKK       ',
+      '########################',
+      '########################',
+      ] },
+      { kind: 'duel', rival: 'grappler', theme: 'market', lockCameraY: 8, map: [
+      '                        ',
+      '                        ',
+      '                        ',
+      '                        ',
+      '                        ',
+      '                        ',
+      '                        ',
+      '                        ',
+      '                        ',
+      '                        ',
+      '                        ',
+      '    x              Y    ',
+      '########################',
+      '########################',
+      ] },
+      { kind: 'duel', rival: 'rushdown', theme: 'dojo', lockCameraY: 8, map: [
+      '                        ',
+      '                        ',
+      '                        ',
+      '                        ',
+      '                        ',
+      '                        ',
+      '                        ',
+      '                        ',
+      '                        ',
+      '                        ',
+      '                        ',
+      '    x              Y    ',
+      '########################',
+      '########################',
+      ] },
+    ] },
+  { id: 'l4', name: 'RIVETER HEIGHTS', tag: 'GIRDER TOWER', music: 'l4', targets: [60000, 80000, 110000], hint: 'UP/DOWN ON LADDERS. JUMP FIRES A CANNON. DRUMS CAN NOT BE STOMPED.',
+    stages: [{ kind: 'platform', theme: 'tower', vertical: true,
+      cannons: { '10,55': { a0: -1.35, a1: -0.15, speed: 0.03 }, '20,48': { a0: -3.1, a1: -1.7, speed: 0.03 }, '4,42': { a0: -1.4, a1: -0.2, speed: 0.03 } },
+      map: [
+    '                        ',
+    '                        ',
+    '                        ',
+    '                        ',
+    '                        ',
+    '                  @    I',
+    '   G                   I',
+    '                       I',
+    '  ===H==================',
+    '     H                  ',
+    '     H                  ',
+    '     H                  ',
+    '     H                  ',
+    '     H              lL##',
+    '   ===============H=====',
+    '                  H     ',
+    '                  H     ',
+    '                  H     ',
+    '                  H     ',
+    '##rR      c       H     ',
+    '=====H===============   ',
+    '     H                  ',
+    '     H                  ',
+    '     H                  ',
+    '     H                  ',
+    '     H        M     lL##',
+    '   =================H===',
+    '                    H   ',
+    '                    H   ',
+    '                    H   ',
+    '                    H   ',
+    '##rR                H   ',
+    '=======H=============   ',
+    '       H                ',
+    '       H                ',
+    '      IHIIIIIIIIIIIIII  ',
+    '       H                ',
+    '       H  c         lL##',
+    '      ==================',
+    'I                      I',
+    'I                      I',
+    'I                      I',
+    'I   C                  I',
+    'I                      I',
+    'I                      I',
+    'I                      I',
+    'I                      I',
+    'I                      I',
+    'I                   C  I',
+    'I                      I',
+    'I                      I',
+    'I                      I',
+    'I                      I',
+    'I                      I',
+    'I                      I',
+    'I#rR      C            I',
+    '======H==============   ',
+    '      H                 ',
+    '      H                 ',
+    '      H                 ',
+    '      H                 ',
+    '      H     M       lL##',
+    '   ================H====',
+    '                   H    ',
+    '                   H    ',
+    '                   H    ',
+    '                   H    ',
+    '##rR     c         H    ',
+    '====H================   ',
+    '    H                   ',
+    '    H                   ',
+    '    H                   ',
+    '    H                   ',
+    '    H               lL##',
+    '   ==================H==',
+    '                     H  ',
+    '                     H  ',
+    '                     H  ',
+    '                     H  ',
+    '##rR                 H  ',
+    '==H==================   ',
+    '  H                     ',
+    '  H                     ',
+    '  H                     ',
+    '  H                     ',
+    '  H   x                 ',
+    '########################',
+    '########################'
+
+  ] }] },
 ];
 
 // ----------------------------------------------------------------------- GAME --------
@@ -2264,11 +2427,11 @@ const G = {
     }
   },
   updateBonus() {
-    const b = this.bonus; if (b.done) return;
+    const b = this.bonus;
+    if (b.done) { b.end--; if (b.end <= 0) this.nextStage(); return; }
     b.t--;
     if (this.ents.filter(e => e instanceof Crate && !e.remove).length === 0) { b.t = Math.min(b.t, 30); }
-    if (b.t <= 0) { b.done = true; this.toast('BONUS -' + (b.bonusMs / 1000).toFixed(1) + 'S'); setTimeout(() => {}, 0); this.bonusEnd = 50; }
-    if (this.bonusEnd !== undefined) { this.bonusEnd--; if (this.bonusEnd <= 0) { this.bonusEnd = undefined; this.nextStage(); } }
+    if (b.t <= 0) { b.done = true; b.end = 50; this.toast('BONUS -' + (b.bonusMs / 1000).toFixed(1) + ' SEC'); this.hero.control = false; Audio.sfx('medal'); }
   },
   setupBike() {
     const map = this.map; const floorRow = this.stage.floorRow;
@@ -2336,9 +2499,11 @@ const G = {
         const key = h.hitbox.id + ':' + this.ents.indexOf(e);
         if (!h.attackHit.has(key)) {
           h.attackHit.add(key);
+          const hb = h.hitbox;
           const from = h.mallet > 0 ? 'mallet' : h.state === 'upper' ? 'upper' : 'punch';
-          e.takeHit(this, { dmg: h.hitbox.dmg, big: h.hitbox.big || h.mallet > 0, dir: h.facing, from, id: h.hitbox.id, launch: h.hitbox.launch, fightDmg: h.hitbox.big ? 16 : h.hitbox.launch ? 14 : 8 });
-          if (h.hitbox.big) { FX.hitstop(PHYS.HITSTOP_BIG); FX.shake(4); h.sx = 1.3; }
+          e.takeHit(this, { dmg: hb.dmg, big: hb.big || h.mallet > 0, dir: h.facing, from, id: hb.id, launch: hb.launch, fightDmg: hb.big ? 16 : hb.launch ? 14 : 8 });
+          if (hb.big) { FX.hitstop(PHYS.HITSTOP_BIG); FX.shake(4); h.sx = 1.3; }
+          if (!h.hitbox) break;
           continue;
         }
       }
@@ -2569,7 +2734,7 @@ function drawHUD(ctx) {
   if (G.bonus) {
     const b = G.bonus; text(ctx, 'SMASH!', W / 2, 20, PAL.yellow, { align: 'center', scale: 2, shadow: sh });
     text(ctx, (Math.max(0, b.t) / 60).toFixed(1) + 'S', W / 2, 34, b.t < 180 && (G.frame & 8) ? PAL.red : PAL.white, { align: 'center', scale: 2, shadow: sh });
-    text(ctx, 'CRATES ' + b.smashed + '/' + b.total + '  BONUS -' + (b.bonusMs / 1000).toFixed(1) + 'S', W / 2, 50, PAL.white, { align: 'center', shadow: sh });
+    text(ctx, 'CRATES ' + b.smashed + '/' + b.total + '   BONUS -' + (b.bonusMs / 1000).toFixed(1) + ' SEC', W / 2, 50, PAL.white, { align: 'center', shadow: sh });
   }
   // toasts
   let ty = H - 40;
@@ -2580,12 +2745,12 @@ function drawHUD(ctx) {
 function drawDuelHUD(ctx) {
   const h = G.hero, r = G.rival;
   const bar = (x, y, w, frac, right) => { ctx.fillStyle = PAL.black; ctx.fillRect(x - 1, y - 1, w + 2, 8); ctx.fillStyle = PAL.red; ctx.fillRect(x, y, w, 6); ctx.fillStyle = frac > 0.3 ? PAL.yellow : PAL.orange; const fw = Math.round(w * frac); ctx.fillRect(right ? x + w - fw : x, y, fw, 6); ctx.fillStyle = PAL.white; ctx.fillRect(right ? x + w - fw : x, y, fw, 1); };
-  bar(W / 2 - 150, 14, 120, clamp(h.hp / h.maxHp, 0, 1), false);
-  bar(W / 2 + 30, 14, 120, clamp(r.hp / r.maxHp, 0, 1), true);
-  text(ctx, 'SCUTE', W / 2 - 150, 22, PAL.white, { shadow: PAL.black });
-  text(ctx, r.cfg.name, W / 2 + 150, 22, PAL.white, { align: 'right', shadow: PAL.black });
+  bar(W / 2 - 140, 30, 112, clamp(h.hp / h.maxHp, 0, 1), false);
+  bar(W / 2 + 28, 30, 112, clamp(r.hp / r.maxHp, 0, 1), true);
+  text(ctx, 'SCUTE', W / 2 - 140, 38, PAL.white, { shadow: PAL.black });
+  text(ctx, r.cfg.name, W / 2 + 140, 38, PAL.white, { align: 'right', shadow: PAL.black });
   const secs = Math.ceil(G.roundClock / 60);
-  text(ctx, String(secs), W / 2, 12, secs <= 10 && (G.frame & 8) ? PAL.red : PAL.white, { align: 'center', scale: 2, shadow: PAL.black });
+  text(ctx, String(secs), W / 2, 28, secs <= 10 && (G.frame & 8) ? PAL.red : PAL.white, { align: 'center', scale: 2, shadow: PAL.black });
   if (G.roundState === 'intro') {
     const t = G.roundTimer;
     if (t < 70) text(ctx, 'ROUND ' + G.roundNum, W / 2, 90, PAL.yellow, { align: 'center', scale: 3, shadow: PAL.black });
@@ -2738,7 +2903,7 @@ Audio.play('title');
 requestAnimationFrame(frame);
 
 // Test hook (used by automated playthrough checks; harmless in normal play)
-window.__scute = { G, Input, PHYS, LEVELS, step, render, TileMap, findFloor, Hero, Storage, Audio };
+window.__scute = { G, Input, PHYS, LEVELS, step, render, TileMap, findFloor, Hero, Storage, Audio, classes: { Drum, Crate, Thug, Rival, Walker, Shell, Flyer, Gem, Cannon, Curve } };
 </script>
 </body>
 </html>
